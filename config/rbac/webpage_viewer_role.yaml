@@ -1,0 +1,20 @@
+# permissions for end users to view webpages.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: webpage-viewer-role
+rules:
+- apiGroups:
+  - sandbox.rvmiller.com
+  resources:
+  - webpages
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - sandbox.rvmiller.com
+  resources:
+  - webpages/status
+  verbs:
+  - get

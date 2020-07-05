@@ -1,0 +1,7 @@
+apiVersion: sandbox.rvmiller.com/v1beta1
+kind: WebPage
+metadata:
+  name: webpage-sample
+spec:
+  # Add fields here
+  foo: bar

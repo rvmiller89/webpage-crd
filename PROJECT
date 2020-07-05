@@ -1,0 +1,7 @@
+domain: rvmiller.com
+repo: github.com/rvmiller89/webpage-crd
+resources:
+- group: sandbox
+  kind: WebPage
+  version: v1beta1
+version: "2"
