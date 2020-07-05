@@ -54,3 +54,5 @@ Forwarding from [::1]:7070 -> 80
 ```
 
 Then you can see nginx serving the webpage:
+
+<img src="https://rvmiller.com/wp-content/uploads/2020/07/crd.png" />
