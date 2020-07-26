@@ -21,12 +21,12 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	util "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	api "github.com/rvmiller89/webpage-crd/api/v1beta1"
 )
@@ -41,9 +41,14 @@ type WebPageReconciler struct {
 // +kubebuilder:rbac:groups=sandbox.rvmiller.com,resources=webpages,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=sandbox.rvmiller.com,resources=webpages/status,verbs=get;update;patch
 
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+
 func (r *WebPageReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	log := r.Log.WithValues("webpage", req.NamespacedName)
+
+	log.Info("starting reconcile")
 
 	// Get custom resource
 	var webpage api.WebPage
@@ -52,59 +57,29 @@ func (r *WebPageReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// CreatOrUpdate ConfigMap
-	var cm corev1.ConfigMap
-	cm.Name = webpage.Name + "-config"
-	cm.Namespace = webpage.Namespace
-	_, err := ctrl.CreateOrUpdate(ctx, r, &cm, func() error {
-		cm.Data = map[string]string{
-			"index.html": webpage.Spec.Html,
-		}
-		// For garbage collector to clean up resource
-		return util.SetControllerReference(&webpage, &cm, r.Scheme)
-	})
+	// Desired ConfigMap
+	cm, err := r.desiredConfigMap(webpage)
 	if err != nil {
-		log.Error(err, "unable to CreateOrUpdate configmap")
 		return ctrl.Result{}, err
 	}
 
-	// Create nginx pod with mounted ConfigMap volume if it does not exist
-	if webpage.Status.LastUpdateTime == nil {
-		var pod corev1.Pod
-		pod.Name = webpage.Name + "-nginx"
-		pod.Namespace = webpage.Namespace
-		_, err = ctrl.CreateOrUpdate(ctx, r, &pod, func() error {
-			pod.Spec.Containers = []corev1.Container{
-				corev1.Container{
-					Name:  "nginx",
-					Image: "nginx",
-					VolumeMounts: []corev1.VolumeMount{
-						{
-							Name:      "config-volume",
-							MountPath: "/usr/share/nginx/html",
-						},
-					},
-				},
-			}
-			pod.Spec.Volumes = []corev1.Volume{
-				corev1.Volume{
-					Name: "config-volume",
-					VolumeSource: corev1.VolumeSource{
-						ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{
-								Name: webpage.Name + "-config",
-							},
-						},
-					},
-				},
-			}
-			// For garbage collector to clean up resource
-			return util.SetControllerReference(&webpage, &pod, r.Scheme)
-		})
-		if err != nil {
-			log.Error(err, "unable to CreateOrUpdate pod")
-			return ctrl.Result{}, err
-		}
+	// Desired Deployment
+	dep, err := r.desiredDeployment(webpage, cm)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Patch (create/update) both owned resources
+	applyOpts := []client.PatchOption{client.ForceOwnership, client.FieldOwner("webpage-controller")}
+
+	err = r.Patch(ctx, &cm, client.Apply, applyOpts...)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	err = r.Patch(ctx, &dep, client.Apply, applyOpts...)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Set the last update time
@@ -113,11 +88,15 @@ func (r *WebPageReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		log.Error(err, "unable to update status")
 	}
 
+	log.Info("finished reconcile")
+
 	return ctrl.Result{}, nil
 }
 
 func (r *WebPageReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&api.WebPage{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.ConfigMap{}).
 		Complete(r)
 }
